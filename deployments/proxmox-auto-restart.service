@@ -1,0 +1,22 @@
+[Unit]
+Description=Proxmox Auto-Restart Service
+After=network.target pve-cluster.service
+Wants=pve-cluster.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/proxmox-auto-restart
+ExecStart=/opt/proxmox-auto-restart/proxmox-auto-restart
+Restart=always
+RestartSec=10
+Environment="PORT=8080"
+Environment="DB_PATH=/opt/proxmox-auto-restart/proxmox.db"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=proxmox-auto-restart
+
+[Install]
+WantedBy=multi-user.target
