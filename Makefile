@@ -1,12 +1,26 @@
-.PHONY: build run test clean deploy
+BINARY_NAME := proxmox-auto-restart
 
-# Build binary for Linux (Proxmox server)
-build:
-	GOOS=linux GOARCH=amd64 go build -o proxmox-auto-restart ./cmd/server
+.PHONY: all build build-local build-linux build-linux-amd64 build-linux-arm64 clean test run deploy install
 
-# Build for current OS (development)
+all: build
+
+# Build for all platforms
+build: build-local build-linux-amd64
+
+# Build for local platform
 build-local:
-	go build -o proxmox-auto-restart ./cmd/server
+	go build -o $(BINARY_NAME) ./cmd/server
+
+# Build for Linux amd64 (most common for Proxmox servers)
+build-linux-amd64:
+	GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux-amd64 ./cmd/server
+
+# Build for Linux arm64
+build-linux-arm64:
+	GOOS=linux GOARCH=arm64 go build -o $(BINARY_NAME)-linux-arm64 ./cmd/server
+
+# Build for Linux (default to amd64)
+build-linux: build-linux-amd64
 
 # Run locally
 run:
