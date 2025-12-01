@@ -48,7 +48,39 @@ func GetResources(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Failed to get resources from Proxmox")
 		return
 	}
-	respondJSON(w, http.StatusOK, resources)
+
+	// Pagination
+	limit := 10 // Default limit
+	offset := 0
+
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	total := len(resources)
+	start := offset
+	end := offset + limit
+
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+
+	paginatedResources := resources[start:end]
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"data":  paginatedResources,
+		"total": total,
+	})
 }
 
 func GetResource(w http.ResponseWriter, r *http.Request) {
@@ -351,6 +383,7 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs, err := db.GetLogs(filter)
 	if err != nil {
+		log.Printf("ERROR: Failed to get logs: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to get logs")
 		return
 	}
@@ -363,6 +396,7 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 func GetStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := db.GetSystemStatus()
 	if err != nil {
+		log.Printf("ERROR: Failed to get system status: %v", err)
 		respondError(w, http.StatusInternalServerError, "Failed to get system status")
 		return
 	}
