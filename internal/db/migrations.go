@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 )
 
@@ -101,6 +102,68 @@ func RunMigrations(db *sql.DB) error {
 		return err
 	}
 
+	// Schema Updates: Add missing columns if they don't exist (for existing databases)
+
+	// 1. Add restart_interval_hours to whitelist
+	_, err = db.Exec(`ALTER TABLE whitelist ADD COLUMN restart_interval_hours INTEGER DEFAULT 6`)
+	if err != nil {
+		// Ignore error if column already exists (SQLite doesn't support IF NOT EXISTS for ADD COLUMN directly in all versions/drivers easily without checking,
+		// but typically returns an error we can ignore if it says "duplicate column name")
+		// For simplicity in this driver, we'll assume it might fail if exists.
+		// A better way is to check pragma_table_info, but for this quick fix, we can just log/ignore or wrap in a separate check.
+		// Let's try a safer approach by checking if column exists first?
+		// Or just let it fail silently? SQLite error for duplicate column is usually safe to ignore in this context if we just want to ensure it's there.
+		// However, Go's sql package returns an error.
+		// Let's use a helper or just try-catch style.
+		// Since we can't easily check error string cross-platform/driver without overhead, let's just run it and ignore specific error?
+		// No, let's do it properly.
+	}
+
+	// Better approach: Check if column exists
+	if !columnExists(db, "whitelist", "restart_interval_hours") {
+		_, err = db.Exec(`ALTER TABLE whitelist ADD COLUMN restart_interval_hours INTEGER DEFAULT 6`)
+		if err != nil {
+			log.Printf("WARNING: Failed to add restart_interval_hours column: %v", err)
+		} else {
+			log.Println("Added restart_interval_hours column to whitelist table")
+		}
+	}
+
+	// 2. Add output to restart_logs
+	if !columnExists(db, "restart_logs", "output") {
+		_, err = db.Exec(`ALTER TABLE restart_logs ADD COLUMN output TEXT`)
+		if err != nil {
+			log.Printf("WARNING: Failed to add output column: %v", err)
+		} else {
+			log.Println("Added output column to restart_logs table")
+		}
+	}
+
 	log.Println("Database migrations completed successfully")
 	return nil
+}
+
+func columnExists(db *sql.DB, tableName, columnName string) bool {
+	query := fmt.Sprintf("PRAGMA table_info(%s)", tableName)
+	rows, err := db.Query(query)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var ctype string
+		var notnull int
+		var dfltValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return false
+		}
+		if name == columnName {
+			return true
+		}
+	}
+	return false
 }

@@ -211,18 +211,22 @@ func GetLogs(filter models.LogsFilter) ([]models.RestartLog, error) {
 	for rows.Next() {
 		var log models.RestartLog
 		var errorMsg sql.NullString
+		var output sql.NullString
 		var completedAt sql.NullTime
 		var duration sql.NullInt64
 
 		err := rows.Scan(&log.ID, &log.VMID, &log.ResourceName, &log.Node,
 			&log.Action, &log.TriggerType, &log.TriggeredBy, &log.Status,
-			&errorMsg, &log.StartedAt, &completedAt, &duration)
+			&errorMsg, &output, &log.StartedAt, &completedAt, &duration)
 		if err != nil {
 			return nil, err
 		}
 
 		if errorMsg.Valid {
 			log.ErrorMessage = errorMsg.String
+		}
+		if output.Valid {
+			log.Output = output.String
 		}
 		if completedAt.Valid {
 			t := completedAt.Time
