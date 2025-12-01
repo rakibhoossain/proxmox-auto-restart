@@ -19,14 +19,15 @@ type Resource struct {
 
 // Whitelist represents a VM/Container configured for auto-restart
 type Whitelist struct {
-	ID           int64     `json:"id"`
-	VMID         int       `json:"vmid"`
-	ResourceName string    `json:"resource_name"`
-	Node         string    `json:"node"`
-	Enabled      bool      `json:"enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	CreatedBy    string    `json:"created_by"`
-	Notes        string    `json:"notes"`
+	ID                   int64     `json:"id"`
+	VMID                 int       `json:"vmid"`
+	ResourceName         string    `json:"resource_name"`
+	Node                 string    `json:"node"`
+	Enabled              bool      `json:"enabled"`
+	RestartIntervalHours int       `json:"restart_interval_hours"`
+	CreatedAt            time.Time `json:"created_at"`
+	CreatedBy            string    `json:"created_by"`
+	Notes                string    `json:"notes"`
 }
 
 // RestartLog represents a restart operation audit log
@@ -40,6 +41,7 @@ type RestartLog struct {
 	TriggeredBy     string     `json:"triggered_by"`
 	Status          string     `json:"status"` // success, failed, pending
 	ErrorMessage    string     `json:"error_message,omitempty"`
+	Output          string     `json:"output,omitempty"`
 	StartedAt       time.Time  `json:"started_at"`
 	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 	DurationSeconds int64      `json:"duration_seconds,omitempty"`
@@ -47,17 +49,19 @@ type RestartLog struct {
 
 // CreateWhitelistRequest is the request body for adding a VM/Container to whitelist
 type CreateWhitelistRequest struct {
-	VMID         int    `json:"vmid"`
-	ResourceName string `json:"resource_name"`
-	Node         string `json:"node"`
-	CreatedBy    string `json:"created_by"`
-	Notes        string `json:"notes"`
+	VMID                 int    `json:"vmid"`
+	ResourceName         string `json:"resource_name"`
+	Node                 string `json:"node"`
+	CreatedBy            string `json:"created_by"`
+	Notes                string `json:"notes"`
+	RestartIntervalHours int    `json:"restart_interval_hours"`
 }
 
 // UpdateWhitelistRequest is the request body for updating a whitelist entry
 type UpdateWhitelistRequest struct {
-	Enabled bool   `json:"enabled"`
-	Notes   string `json:"notes"`
+	Enabled              bool   `json:"enabled"`
+	Notes                string `json:"notes"`
+	RestartIntervalHours int    `json:"restart_interval_hours"`
 }
 
 // ResourceActionRequest is the request body for resource actions
@@ -87,4 +91,15 @@ type LogsFilter struct {
 	EndDate      *time.Time
 	Limit        int
 	Offset       int
+}
+
+// ContainerService represents a service installed on a container
+type ContainerService struct {
+	ID              int64     `json:"id"`
+	VMID            int       `json:"vmid"`
+	Node            string    `json:"node"`
+	ServiceName     string    `json:"service_name"`
+	ServiceType     string    `json:"service_type"` // grow, connect, custom
+	InstallCommands string    `json:"install_commands,omitempty"`
+	InstalledAt     time.Time `json:"installed_at"`
 }

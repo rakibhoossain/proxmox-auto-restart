@@ -18,6 +18,7 @@ func RunMigrations(db *sql.DB) error {
 			resource_name TEXT NOT NULL,
 			node TEXT NOT NULL,
 			enabled BOOLEAN DEFAULT 1,
+			restart_interval_hours INTEGER DEFAULT 6,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			created_by TEXT NOT NULL,
 			notes TEXT,
@@ -51,6 +52,7 @@ func RunMigrations(db *sql.DB) error {
 			triggered_by TEXT NOT NULL,
 			status TEXT NOT NULL,
 			error_message TEXT,
+			output TEXT,
 			started_at DATETIME NOT NULL,
 			completed_at DATETIME,
 			duration_seconds INTEGER
@@ -72,6 +74,29 @@ func RunMigrations(db *sql.DB) error {
 	}
 
 	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_restart_logs_started_at ON restart_logs(started_at DESC)`)
+	if err != nil {
+		return err
+	}
+
+	// Create container_services table for tracking installed services
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS container_services (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			vmid INTEGER NOT NULL,
+			node TEXT NOT NULL,
+			service_name TEXT NOT NULL,
+			service_type TEXT NOT NULL,
+			install_commands TEXT,
+			installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(vmid, node, service_name)
+		)
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Create index for container_services
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_container_services_vmid ON container_services(vmid, node)`)
 	if err != nil {
 		return err
 	}

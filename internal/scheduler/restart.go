@@ -17,9 +17,9 @@ var restartCron *cron.Cron
 func StartRestartScheduler(interval string) error {
 	restartCron = cron.New()
 
-	// Default: every 6 hours
+	// Run every hour to check for due restarts
 	if interval == "" {
-		interval = "@every 6h"
+		interval = "@every 1h"
 	}
 
 	_, err := restartCron.AddFunc(interval, restartWhitelistedResources)
@@ -28,8 +28,8 @@ func StartRestartScheduler(interval string) error {
 	}
 
 	restartCron.Start()
-	log.Printf("Auto-restart scheduler started (interval: %s, next restart: %s)",
-		interval, time.Now().Add(6*time.Hour).Format(time.RFC3339))
+	log.Printf("Auto-restart scheduler started (interval: %s, next run: %s)",
+		interval, time.Now().Add(1*time.Hour).Format(time.RFC3339))
 	return nil
 }
 
@@ -43,7 +43,7 @@ func StopRestartScheduler() {
 
 // restartWhitelistedResources restarts all enabled whitelisted VMs/Containers
 func restartWhitelistedResources() {
-	log.Println("Starting auto-restart of whitelisted resources...")
+	log.Println("Starting auto-restart check for whitelisted resources...")
 
 	// Get enabled whitelist entries
 	whitelisted, err := db.GetEnabledWhitelist()
@@ -57,7 +57,7 @@ func restartWhitelistedResources() {
 		return
 	}
 
-	log.Printf("Found %d whitelisted resource(s) for auto-restart", len(whitelisted))
+	log.Printf("Found %d whitelisted resource(s)", len(whitelisted))
 
 	// Fetch current resources to get type
 	resources, err := proxmox.GetAllResources()
@@ -79,13 +79,42 @@ func restartWhitelistedResources() {
 			continue
 		}
 
-		log.Printf("Auto-restarting resource: %s (VMID: %d, Type: %s, Node: %s)",
-			wl.ResourceName, wl.VMID, resourceType, wl.Node)
+		// Check if it's time to restart
+		lastRestart, err := db.GetLastRestartTime(wl.VMID)
+		if err != nil {
+			log.Printf("ERROR: Failed to get last restart time for %d: %v", wl.VMID, err)
+			continue
+		}
 
-		restartResource(wl.VMID, wl.ResourceName, wl.Node, resourceType, "auto", "system")
+		// Default interval is 6 hours if not set (though DB default is 6)
+		intervalHours := wl.RestartIntervalHours
+		if intervalHours < 1 {
+			intervalHours = 6
+		}
+
+		// If never restarted, or time since last restart >= interval
+		shouldRestart := false
+		if lastRestart.IsZero() {
+			shouldRestart = true
+			log.Printf("Resource %d (%s) has never been auto-restarted, triggering now", wl.VMID, wl.ResourceName)
+		} else {
+			hoursSince := time.Since(lastRestart).Hours()
+			if hoursSince >= float64(intervalHours) {
+				shouldRestart = true
+				log.Printf("Resource %d (%s) last restarted %.1f hours ago (interval: %dh), triggering now",
+					wl.VMID, wl.ResourceName, hoursSince, intervalHours)
+			} else {
+				log.Printf("Resource %d (%s) not due for restart (last: %.1f hours ago, interval: %dh)",
+					wl.VMID, wl.ResourceName, hoursSince, intervalHours)
+			}
+		}
+
+		if shouldRestart {
+			restartResource(wl.VMID, wl.ResourceName, wl.Node, resourceType, "auto", "system")
+		}
 	}
 
-	log.Println("Auto-restart cycle completed")
+	log.Println("Auto-restart check completed")
 }
 
 // restartResource restarts a specific VM/Container and logs the operation
@@ -112,13 +141,14 @@ func restartResource(vmid int, resourceName, node, resourceType, triggerType, tr
 
 	// Execute restart
 	startTime := time.Now()
-	err = proxmox.RestartResource(node, vmid, resourceType)
+	output, err := proxmox.RestartResource(node, vmid, resourceType)
 	duration := time.Since(startTime).Seconds()
 
 	// Update log entry
 	completedAt := time.Now()
 	logEntry.CompletedAt = &completedAt
 	logEntry.DurationSeconds = int64(duration)
+	logEntry.Output = output
 
 	if err != nil {
 		logEntry.Status = "failed"
@@ -176,13 +206,14 @@ func stopResource(vmid int, resourceName, node, resourceType, triggerType, trigg
 
 	// Execute stop
 	startTime := time.Now()
-	err = proxmox.StopResource(node, vmid, resourceType)
+	output, err := proxmox.StopResource(node, vmid, resourceType)
 	duration := time.Since(startTime).Seconds()
 
 	// Update log entry
 	completedAt := time.Now()
 	logEntry.CompletedAt = &completedAt
 	logEntry.DurationSeconds = int64(duration)
+	logEntry.Output = output
 
 	if err != nil {
 		logEntry.Status = "failed"
@@ -240,13 +271,14 @@ func startResource(vmid int, resourceName, node, resourceType, triggerType, trig
 
 	// Execute start
 	startTime := time.Now()
-	err = proxmox.StartResource(node, vmid, resourceType)
+	output, err := proxmox.StartResource(node, vmid, resourceType)
 	duration := time.Since(startTime).Seconds()
 
 	// Update log entry
 	completedAt := time.Now()
 	logEntry.CompletedAt = &completedAt
 	logEntry.DurationSeconds = int64(duration)
+	logEntry.Output = output
 
 	if err != nil {
 		logEntry.Status = "failed"

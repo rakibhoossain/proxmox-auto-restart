@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -24,6 +25,17 @@ func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 
 func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{"error": message})
+}
+
+func contains(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) >= len(substr) && func() bool {
+		for i := 0; i <= len(s)-len(substr); i++ {
+			if s[i:i+len(substr)] == substr {
+				return true
+			}
+		}
+		return false
+	}())
 }
 
 // Resource handlers (VMs and Containers) - Real-time data from Proxmox
@@ -257,7 +269,7 @@ func UpdateWhitelist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.UpdateWhitelist(id, req.Enabled, req.Notes)
+	err = db.UpdateWhitelist(int(id), &req)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to update whitelist")
 		return
@@ -337,7 +349,7 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	logs, err := db.GetRestartLogs(filter)
+	logs, err := db.GetLogs(filter)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to get logs")
 		return
@@ -369,6 +381,205 @@ func GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, status)
+}
+
+// Container Management Handlers
+
+func CloneContainerHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SourceVMID int    `json:"source_vmid"`
+		NewVMID    int    `json:"new_vmid"`
+		TargetNode string `json:"target_node"`
+		Hostname   string `json:"hostname"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.SourceVMID == 0 || req.NewVMID == 0 || req.TargetNode == "" {
+		respondError(w, http.StatusBadRequest, "source_vmid, new_vmid, and target_node are required")
+		return
+	}
+
+	// Clone the container
+	if err := proxmox.CloneContainer(req.SourceVMID, req.NewVMID, req.TargetNode, req.Hostname); err != nil {
+		log.Printf("ERROR: Failed to clone container: %v", err)
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message":     "Container cloned successfully",
+		"source_vmid": req.SourceVMID,
+		"new_vmid":    req.NewVMID,
+		"target_node": req.TargetNode,
+	})
+}
+
+func DeleteContainerHandler(w http.ResponseWriter, r *http.Request) {
+	vmidStr := chi.URLParam(r, "vmid")
+	vmid, err := strconv.Atoi(vmidStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid VMID")
+		return
+	}
+
+	node := r.URL.Query().Get("node")
+	if node == "" {
+		respondError(w, http.StatusBadRequest, "node query parameter is required")
+		return
+	}
+
+	// Delete the container
+	if err := proxmox.DeleteContainer(vmid, node); err != nil {
+		log.Printf("ERROR: Failed to delete container: %v", err)
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Remove from whitelist if exists
+	_ = db.DeleteWhitelistByVMID(vmid)
+
+	// Remove service records
+	_ = db.DeleteServicesByVMID(vmid, node)
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Container deleted successfully",
+		"vmid":    vmid,
+		"node":    node,
+	})
+}
+
+func DeployBlockchainNodeHandler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SourceVMID int      `json:"source_vmid"`
+		NewVMID    int      `json:"new_vmid"`
+		TargetNode string   `json:"target_node"`
+		Hostname   string   `json:"hostname"`
+		Commands   []string `json:"commands"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	if req.SourceVMID == 0 || req.NewVMID == 0 || req.TargetNode == "" {
+		respondError(w, http.StatusBadRequest, "source_vmid, new_vmid, and target_node are required")
+		return
+	}
+
+	if len(req.Commands) == 0 {
+		respondError(w, http.StatusBadRequest, "commands array is required")
+		return
+	}
+
+	// Deploy blockchain node
+	if err := proxmox.DeployBlockchainNode(req.SourceVMID, req.NewVMID, req.TargetNode, req.Hostname, req.Commands); err != nil {
+		log.Printf("ERROR: Failed to deploy blockchain node: %v", err)
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Record service installation in database
+	serviceName := req.Hostname
+	if serviceName == "" {
+		serviceName = fmt.Sprintf("blockchain-node-%d", req.NewVMID)
+	}
+	// Determine service type from commands
+	serviceType := "custom"
+	commandStr := ""
+	if len(req.Commands) > 0 {
+		commandStr = req.Commands[0]
+		if len(commandStr) > 0 {
+			if contains(commandStr, "growblockchain") {
+				serviceType = "grow"
+			} else if contains(commandStr, "connectblockchain") {
+				serviceType = "connect"
+			}
+		}
+	}
+
+	// Store all commands as JSON-like string
+	allCommands := ""
+	for i, cmd := range req.Commands {
+		if i > 0 {
+			allCommands += "\n"
+		}
+		allCommands += cmd
+	}
+
+	_ = db.CreateContainerService(req.NewVMID, req.TargetNode, serviceName, serviceType, allCommands)
+
+	// Log the deployment
+	now := time.Now()
+	_, _ = db.CreateRestartLog(&models.RestartLog{
+		VMID:         req.NewVMID,
+		ResourceName: req.Hostname,
+		Node:         req.TargetNode,
+		Action:       "deploy",
+		TriggerType:  "manual",
+		TriggeredBy:  "api",
+		Status:       "success",
+		StartedAt:    now,
+		CompletedAt:  &now,
+	})
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"message":     "Blockchain node deployed successfully",
+		"new_vmid":    req.NewVMID,
+		"target_node": req.TargetNode,
+		"hostname":    req.Hostname,
+	})
+}
+
+func GetNextAvailableVMID(w http.ResponseWriter, r *http.Request) {
+	// Fetch all resources to find max VMID
+	resources, err := proxmox.GetAllResources()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to fetch resources")
+		return
+	}
+
+	maxVMID := 100 // Start from 100 if no resources exist
+	for _, resource := range resources {
+		if resource.VMID > maxVMID {
+			maxVMID = resource.VMID
+		}
+	}
+
+	nextVMID := maxVMID + 1
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"suggested_vmid": nextVMID,
+		"max_vmid":       maxVMID,
+	})
+}
+
+func GetContainerServicesHandler(w http.ResponseWriter, r *http.Request) {
+	vmidStr := chi.URLParam(r, "vmid")
+	vmid, err := strconv.Atoi(vmidStr)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid VMID")
+		return
+	}
+
+	node := r.URL.Query().Get("node")
+	if node == "" {
+		respondError(w, http.StatusBadRequest, "node query parameter is required")
+		return
+	}
+
+	services, err := db.GetServicesByVMID(vmid, node)
+	if err != nil {
+		log.Printf("ERROR: Failed to get services: %v", err)
+		respondError(w, http.StatusInternalServerError, "Failed to get services")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, services)
 }
 
 func HealthCheck(w http.ResponseWriter, r *http.Request) {

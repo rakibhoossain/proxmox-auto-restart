@@ -57,6 +57,15 @@ func SetupRoutes() http.Handler {
 			r.Get("/", GetLogs) // GET /api/logs?vmid=103&status=success
 		})
 
+		// Container Management
+		r.Route("/containers", func(r chi.Router) {
+			r.Post("/clone", CloneContainerHandler)                // POST /api/containers/clone
+			r.Delete("/{vmid}", DeleteContainerHandler)            // DELETE /api/containers/103?node=www
+			r.Post("/deploy-node", DeployBlockchainNodeHandler)    // POST /api/containers/deploy-node
+			r.Get("/next-vmid", GetNextAvailableVMID)              // GET /api/containers/next-vmid
+			r.Get("/{vmid}/services", GetContainerServicesHandler) // GET /api/containers/103/services?node=www
+		})
+
 		// System
 		r.Get("/status", GetStatus) // GET /api/status
 	})
