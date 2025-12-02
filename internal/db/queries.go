@@ -264,15 +264,28 @@ func GetSystemStatus() (*models.SystemStatus, error) {
 	}
 
 	// Calculate next restart time (6 hours from last auto restart)
-	var lastAutoRestart sql.NullTime
+	var lastAutoRestartStr sql.NullString
 	err = DB.QueryRow(`SELECT MAX(started_at) FROM restart_logs 
-	                    WHERE trigger_type = 'auto'`).Scan(&lastAutoRestart)
+	                    WHERE trigger_type = 'auto'`).Scan(&lastAutoRestartStr)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
 
-	if lastAutoRestart.Valid {
-		status.NextRestartTime = lastAutoRestart.Time.Add(6 * time.Hour)
+	if lastAutoRestartStr.Valid && lastAutoRestartStr.String != "" {
+		// Parse the datetime string from SQLite
+		lastRestart, err := time.Parse("2006-01-02 15:04:05", lastAutoRestartStr.String)
+		if err != nil {
+			// Try RFC3339 format as fallback
+			lastRestart, err = time.Parse(time.RFC3339, lastAutoRestartStr.String)
+			if err != nil {
+				// If parsing fails, use current time
+				status.NextRestartTime = time.Now().Add(6 * time.Hour)
+			} else {
+				status.NextRestartTime = lastRestart.Add(6 * time.Hour)
+			}
+		} else {
+			status.NextRestartTime = lastRestart.Add(6 * time.Hour)
+		}
 	} else {
 		status.NextRestartTime = time.Now().Add(6 * time.Hour)
 	}
