@@ -96,6 +96,10 @@ Set environment variables for API authentication:
 ```bash
 ssh root@your-proxmox-server
 
+make build-linux-amd64
+
+scp proxmox-auto-restart root@202.126.122.58:/opt/proxmox-auto-restart/
+
 # Edit systemd service to set credentials
 nano /etc/systemd/system/proxmox-auto-restart.service
 ```
