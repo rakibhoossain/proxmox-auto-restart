@@ -30,6 +30,11 @@ func SetupRoutes() http.Handler {
 	// Health check (no auth required)
 	r.Get("/health", HealthCheck)
 
+	// WebSocket routes (custom auth via query parameters)
+	r.Route("/api/ws", func(r chi.Router) {
+		r.Get("/terminal", TerminalHandler) // WS /api/ws/terminal?vmid=100&node=pve&type=lxc&username=admin&password=xxx
+	})
+
 	// API routes (with authentication)
 	r.Route("/api", func(r chi.Router) {
 		// Apply basic auth to all API routes
